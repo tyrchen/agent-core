@@ -66,7 +66,7 @@ pub(crate) enum ControlCommand {
 
 impl AgentController {
     /// Create a new agent controller.
-    pub fn new() -> (Self, tokio::sync::mpsc::UnboundedReceiver<ControlCommand>) {
+    pub(crate) fn new() -> (Self, tokio::sync::mpsc::UnboundedReceiver<ControlCommand>) {
         let (control_tx, control_rx) = tokio::sync::mpsc::unbounded_channel();
 
         let state = Arc::new(AgentState {
@@ -212,6 +212,7 @@ impl AgentController {
     }
 
     /// Check if the agent can continue execution (not paused and not stopped).
+    #[allow(dead_code)]
     pub(crate) fn can_continue(&self) -> bool {
         !self.is_paused() && !self.should_stop()
     }

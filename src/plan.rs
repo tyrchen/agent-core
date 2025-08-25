@@ -1,7 +1,11 @@
 //! Plan management system with MPSC channels for task tracking.
+//! Uses codex-protocol types for compatibility.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+// Re-export codex-protocol plan types for compatibility
+pub use codex_protocol::plan_tool::{PlanItemArg, StepStatus, UpdatePlanArgs};
 
 /// Plan message sent through MPSC channels.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +30,37 @@ impl PlanMessage {
         }
     }
 
+    /// Convert this PlanMessage to UpdatePlanArgs for codex compatibility.
+    pub fn to_update_plan_args(&self, explanation: Option<String>) -> UpdatePlanArgs {
+        let plan: Vec<PlanItemArg> = self
+            .todos
+            .iter()
+            .map(|todo| todo.to_plan_item_arg())
+            .collect();
+
+        UpdatePlanArgs { explanation, plan }
+    }
+
+    /// Create a PlanMessage from UpdatePlanArgs.
+    pub fn from_update_plan_args(args: UpdatePlanArgs) -> Self {
+        let todos: Vec<TodoItem> = args
+            .plan
+            .into_iter()
+            .map(TodoItem::from_plan_item_arg)
+            .collect();
+
+        let mut metadata = PlanMetadata::new();
+        if let Some(explanation) = args.explanation {
+            metadata.description = Some(explanation);
+        }
+
+        Self {
+            todos,
+            metadata: Some(metadata),
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
     /// Create a new plan message with metadata.
     pub fn with_metadata(todos: Vec<TodoItem>, metadata: PlanMetadata) -> Self {
         Self {
@@ -39,7 +74,7 @@ impl PlanMessage {
     pub fn completed_todos(&self) -> Vec<&TodoItem> {
         self.todos
             .iter()
-            .filter(|todo| todo.status == TodoStatus::Completed)
+            .filter(|todo| matches!(todo.status, StepStatus::Completed))
             .collect()
     }
 
@@ -47,7 +82,7 @@ impl PlanMessage {
     pub fn pending_todos(&self) -> Vec<&TodoItem> {
         self.todos
             .iter()
-            .filter(|todo| todo.status == TodoStatus::Pending)
+            .filter(|todo| matches!(todo.status, StepStatus::Pending))
             .collect()
     }
 
@@ -55,15 +90,7 @@ impl PlanMessage {
     pub fn in_progress_todos(&self) -> Vec<&TodoItem> {
         self.todos
             .iter()
-            .filter(|todo| todo.status == TodoStatus::InProgress)
-            .collect()
-    }
-
-    /// Get blocked todos.
-    pub fn blocked_todos(&self) -> Vec<&TodoItem> {
-        self.todos
-            .iter()
-            .filter(|todo| todo.status == TodoStatus::Blocked)
+            .filter(|todo| matches!(todo.status, StepStatus::InProgress))
             .collect()
     }
 
@@ -78,17 +105,18 @@ impl PlanMessage {
     }
 }
 
-/// Individual todo item in a plan.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Individual todo item in a plan with additional metadata.
+/// Extends the basic PlanItemArg from codex-protocol.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
     /// Unique identifier for the todo item
     pub id: uuid::Uuid,
 
-    /// Content/description of the task
+    /// Content/description of the task (maps to PlanItemArg.step)
     pub content: String,
 
-    /// Current status of the task
-    pub status: TodoStatus,
+    /// Current status of the task (uses codex-protocol StepStatus)
+    pub status: StepStatus,
 
     /// Optional priority level (1-5, where 5 is highest priority)
     pub priority: Option<u8>,
@@ -119,7 +147,7 @@ impl TodoItem {
         Self {
             id: uuid::Uuid::new_v4(),
             content: content.into(),
-            status: TodoStatus::Pending,
+            status: StepStatus::Pending,
             priority: None,
             tags: Vec::new(),
             created_at: now,
@@ -163,35 +191,30 @@ impl TodoItem {
     }
 
     /// Update the status of the todo item.
-    pub fn update_status(&mut self, status: TodoStatus) {
+    pub fn update_status(&mut self, status: StepStatus) {
         self.status = status;
         self.updated_at = chrono::Utc::now();
     }
 
     /// Mark the todo as completed.
     pub fn complete(&mut self) {
-        self.update_status(TodoStatus::Completed);
+        self.update_status(StepStatus::Completed);
     }
 
     /// Mark the todo as in progress.
     pub fn start(&mut self) {
-        self.update_status(TodoStatus::InProgress);
-    }
-
-    /// Mark the todo as blocked.
-    pub fn block(&mut self) {
-        self.update_status(TodoStatus::Blocked);
+        self.update_status(StepStatus::InProgress);
     }
 
     /// Reset the todo to pending.
     pub fn reset(&mut self) {
-        self.update_status(TodoStatus::Pending);
+        self.update_status(StepStatus::Pending);
     }
 
     /// Check if the todo is overdue.
     pub fn is_overdue(&self) -> bool {
         if let Some(due_date) = self.due_date {
-            chrono::Utc::now() > due_date && self.status != TodoStatus::Completed
+            chrono::Utc::now() > due_date && !matches!(self.status, StepStatus::Completed)
         } else {
             false
         }
@@ -220,30 +243,43 @@ impl TodoItem {
     }
 }
 
-/// Status of a todo item.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum TodoStatus {
-    /// Task is pending and hasn't been started
-    Pending,
+// Note: TodoStatus is replaced by codex_protocol::plan_tool::StepStatus
+// We keep a type alias for backwards compatibility
+pub type TodoStatus = StepStatus;
 
-    /// Task is currently being worked on
-    InProgress,
-
-    /// Task has been completed successfully
-    Completed,
-
-    /// Task is blocked by dependencies or external factors
-    Blocked,
+// Convenience implementations for StepStatus
+impl From<TodoItem> for PlanItemArg {
+    fn from(todo: TodoItem) -> Self {
+        PlanItemArg {
+            step: todo.content,
+            status: todo.status.clone(),
+        }
+    }
 }
 
-impl std::fmt::Display for TodoStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TodoStatus::Pending => write!(f, "Pending"),
-            TodoStatus::InProgress => write!(f, "In Progress"),
-            TodoStatus::Completed => write!(f, "Completed"),
-            TodoStatus::Blocked => write!(f, "Blocked"),
+impl TodoItem {
+    /// Convert this TodoItem to a PlanItemArg for codex compatibility.
+    pub fn to_plan_item_arg(&self) -> PlanItemArg {
+        PlanItemArg {
+            step: self.content.clone(),
+            status: self.status.clone(),
+        }
+    }
+
+    /// Create a TodoItem from a PlanItemArg.
+    pub fn from_plan_item_arg(plan_item: PlanItemArg) -> Self {
+        let now = chrono::Utc::now();
+        Self {
+            id: uuid::Uuid::new_v4(),
+            content: plan_item.step,
+            status: plan_item.status,
+            priority: None,
+            tags: Vec::new(),
+            created_at: now,
+            updated_at: now,
+            due_date: None,
+            estimated_hours: None,
+            metadata: HashMap::new(),
         }
     }
 }

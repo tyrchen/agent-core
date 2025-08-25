@@ -6,9 +6,11 @@ use async_channel::{Receiver, Sender};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
-use codex_core::CodexConversation;
-use codex_core::config::Config as CodexConfig;
+use codex_core::config::{Config as CodexConfig, ConfigOverrides};
+use codex_core::{CodexConversation, ConversationManager};
+use codex_login::{AuthManager, CodexAuth};
 use codex_protocol::protocol::{Event, EventMsg, InputItem, Op, Submission};
+use std::sync::Arc;
 
 use crate::config::AgentConfig;
 use crate::controller::AgentController;
@@ -22,7 +24,7 @@ pub struct Agent {
     config: AgentConfig,
 
     /// Internal Codex conversation handler
-    codex_conversation: Option<CodexConversation>,
+    codex_conversation: Option<Arc<codex_core::CodexConversation>>,
 
     /// Agent controller for state management
     controller: AgentController,
@@ -105,11 +107,30 @@ impl Agent {
     ) -> Result<AgentHandle> {
         // Initialize Codex conversation if not already done
         if self.codex_conversation.is_none() {
-            // For now, return an error as the actual implementation requires
-            // more complex setup with the Codex system
-            return Err(AgentError::Config {
-                message: "Full Codex integration is not yet implemented. This is a wrapper library structure demonstration.".to_string(),
-            });
+            let codex_config = self._create_codex_config()?;
+
+            // Create conversation manager with appropriate auth
+            let conversation_manager = if let Some(api_key) = self.config.api_key() {
+                ConversationManager::with_auth(CodexAuth::from_api_key(api_key))
+            } else {
+                // Try to load from codex home directory or create with environment auth
+                let codex_home = codex_core::config::find_codex_home()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let auth_manager = Arc::new(AuthManager::new(
+                    codex_home,
+                    codex_protocol::mcp_protocol::AuthMode::ApiKey,
+                ));
+                ConversationManager::new(auth_manager)
+            };
+
+            let new_conversation = conversation_manager
+                .new_conversation(codex_config)
+                .await
+                .map_err(|e| AgentError::Config {
+                    message: format!("Failed to create conversation: {:?}", e),
+                })?;
+
+            self.codex_conversation = Some(new_conversation.conversation);
         }
 
         // Set initial state
@@ -190,10 +211,11 @@ impl std::future::Future for AgentHandle {
 }
 
 /// Internal execution context.
+#[allow(dead_code)]
 struct ExecutionContext {
     config: AgentConfig,
     controller: AgentController,
-    codex_conversation: CodexConversation,
+    codex_conversation: Arc<CodexConversation>,
     input_rx: Receiver<InputMessage>,
     plan_tx: Sender<PlanMessage>,
     output_tx: Sender<OutputMessage>,
@@ -359,12 +381,13 @@ async fn process_input_message(
 
                 // Handle plan updates
                 if let Event {
-                    msg: EventMsg::PlanUpdate { .. },
-                    ..
-                } = event
+                    msg: EventMsg::PlanUpdate(update_args),
+                    id: _,
+                } = &event
                 {
-                    // TODO: Extract plan data and send plan message
-                    // This would require parsing the plan update event
+                    // Convert UpdatePlanArgs to PlanMessage
+                    let plan_message = PlanMessage::from_update_plan_args(update_args.clone());
+                    context.plan_tx.send(plan_message).await?;
                 }
 
                 // Break if task is complete
@@ -407,31 +430,178 @@ fn convert_event_to_output(event: &Event) -> Option<OutputData> {
         EventMsg::AgentReasoningDelta(delta) => Some(OutputData::ReasoningDelta {
             content: delta.delta.clone(),
         }),
+        EventMsg::AgentReasoningRawContent(content) => Some(OutputData::Reasoning {
+            content: content.text.clone(),
+        }),
+        EventMsg::AgentReasoningRawContentDelta(delta) => Some(OutputData::ReasoningDelta {
+            content: delta.delta.clone(),
+        }),
         EventMsg::TaskComplete(_) => Some(OutputData::Completed),
+        EventMsg::TaskStarted => Some(OutputData::Start),
         EventMsg::Error(error) => Some(OutputData::Error {
             error: OutputError::General {
                 message: error.message.clone(),
             },
         }),
-        _ => None, // Ignore other event types for now
+        EventMsg::ExecCommandBegin(exec) => Some(OutputData::ToolStart {
+            tool_name: "exec_command".to_string(),
+            arguments: serde_json::json!({ "command": exec.command }),
+        }),
+        EventMsg::ExecCommandEnd(exec) => Some(OutputData::ToolComplete {
+            tool_name: "exec_command".to_string(),
+            result: serde_json::json!({
+                "exit_code": exec.exit_code,
+                "call_id": exec.call_id
+            }),
+        }),
+        EventMsg::McpToolCallBegin(mcp) => Some(OutputData::ToolStart {
+            tool_name: mcp.invocation.tool.clone(),
+            arguments: serde_json::json!({
+                "server": mcp.invocation.server,
+                "arguments": mcp.invocation.arguments
+            }),
+        }),
+        EventMsg::McpToolCallEnd(mcp) => Some(OutputData::ToolComplete {
+            tool_name: mcp.invocation.tool.clone(),
+            result: serde_json::json!({
+                "server": mcp.invocation.server,
+                "success": mcp.is_success(),
+                "result": mcp.result
+            }),
+        }),
+        EventMsg::WebSearchBegin(search) => Some(OutputData::ToolStart {
+            tool_name: "web_search".to_string(),
+            arguments: serde_json::json!({ "query": search.query }),
+        }),
+        EventMsg::PatchApplyBegin(patch) => Some(OutputData::ToolStart {
+            tool_name: "apply_patch".to_string(),
+            arguments: serde_json::json!({ "changes_count": patch.changes.len() }),
+        }),
+        EventMsg::PatchApplyEnd(patch) => Some(OutputData::ToolComplete {
+            tool_name: "apply_patch".to_string(),
+            result: serde_json::json!({
+                "success": patch.success,
+                "message": "Patch application finished"
+            }),
+        }),
+        EventMsg::ExecCommandOutputDelta(output) => Some(OutputData::ToolOutput {
+            tool_name: "exec_command".to_string(),
+            output: String::from_utf8_lossy(&output.chunk).to_string(),
+        }),
+        EventMsg::StreamError(error) => Some(OutputData::Error {
+            error: OutputError::General {
+                message: error.message.clone(),
+            },
+        }),
+        EventMsg::TokenCount(_) => None, // Token count events don't need to be converted to output
+        EventMsg::SessionConfigured(_) => None, // Session configured events are internal
+        EventMsg::ConversationHistory(_) => None, // History events are internal
+        EventMsg::McpListToolsResponse(_) => None, // Tool list responses are internal
+        EventMsg::GetHistoryEntryResponse(_) => None, // History entry responses are internal
+        EventMsg::TurnAborted(_) => Some(OutputData::Error {
+            error: OutputError::General {
+                message: "Turn was aborted".to_string(),
+            },
+        }),
+        EventMsg::ShutdownComplete => Some(OutputData::Completed),
+        _ => None, // Handle any remaining event types
     }
 }
 
 impl Agent {
     /// Create Codex configuration from agent configuration.
-    ///
-    /// NOTE: This is a placeholder implementation. A real implementation would:
-    /// 1. Convert AgentConfig fields to appropriate CodexConfig fields
-    /// 2. Set up authentication properly
-    /// 3. Configure model providers, tools, MCP servers, etc.
     fn _create_codex_config(&self) -> Result<CodexConfig> {
-        // This is a placeholder - real implementation would need to:
-        // - Map model settings from AgentConfig to CodexConfig
-        // - Set up API keys and authentication
-        // - Configure sandbox and approval policies
-        // - Set up MCP servers and tools
-        Err(AgentError::Config {
-            message: "Codex configuration creation not yet implemented".to_string(),
-        })
+        // Determine which tools to enable based on agent configuration
+        let tools_web_search_request = self
+            .config
+            .tools()
+            .iter()
+            .any(|tool| matches!(tool, crate::tools::ToolConfig::WebSearch { .. }));
+
+        let include_apply_patch_tool = self
+            .config
+            .tools()
+            .iter()
+            .any(|tool| matches!(tool, crate::tools::ToolConfig::ApplyPatch { .. }));
+
+        let overrides = ConfigOverrides {
+            model: Some(self.config.model().to_string()),
+            cwd: Some(self.config.working_directory().clone()),
+            approval_policy: Some(*self.config.approval_policy()),
+            sandbox_mode: Some(self._convert_sandbox_policy()),
+            model_provider: None, // Use default
+            config_profile: None,
+            codex_linux_sandbox_exe: None,
+            base_instructions: self.config.system_prompt().map(|s| s.to_string()),
+            include_plan_tool: Some(true), // Enable plan tool for better integration
+            include_apply_patch_tool: Some(include_apply_patch_tool),
+            disable_response_storage: Some(false),
+            show_raw_agent_reasoning: Some(false),
+            tools_web_search_request: Some(tools_web_search_request),
+        };
+
+        // Load the base configuration with our overrides
+        let mut config = CodexConfig::load_with_cli_overrides(vec![], overrides).map_err(|e| {
+            AgentError::Config {
+                message: format!("Failed to create Codex config: {}", e),
+            }
+        })?;
+
+        // Convert and add MCP server configurations
+        config
+            .mcp_servers
+            .extend(self.config.mcp_servers().iter().map(|server| {
+                let codex_server = self._convert_mcp_server_config(server);
+                (server.name().to_string(), codex_server)
+            }));
+
+        Ok(config)
+    }
+
+    /// Convert AgentConfig SandboxPolicy to codex SandboxMode.
+    fn _convert_sandbox_policy(&self) -> codex_protocol::config_types::SandboxMode {
+        use codex_protocol::config_types::SandboxMode;
+        use codex_protocol::protocol::SandboxPolicy as ProtocolSandbox;
+
+        match self.config.sandbox_policy() {
+            ProtocolSandbox::DangerFullAccess => SandboxMode::DangerFullAccess,
+            ProtocolSandbox::ReadOnly => SandboxMode::ReadOnly,
+            ProtocolSandbox::WorkspaceWrite { .. } => SandboxMode::WorkspaceWrite,
+        }
+    }
+
+    /// Convert AgentConfig MCP server to codex-core McpServerConfig.
+    fn _convert_mcp_server_config(
+        &self,
+        server: &crate::mcp::McpServerConfig,
+    ) -> codex_core::config_types::McpServerConfig {
+        use crate::mcp::McpServerConfig as AgentMcp;
+
+        match server {
+            AgentMcp::Command {
+                command, args, env, ..
+            } => codex_core::config_types::McpServerConfig {
+                command: command.clone(),
+                args: args.clone(),
+                env: if env.is_empty() {
+                    None
+                } else {
+                    Some(env.clone())
+                },
+            },
+            AgentMcp::Http { name, .. } => {
+                // For HTTP-based servers, we'll create a placeholder command-based config
+                // since codex-core only supports command-based MCP servers currently
+                tracing::warn!(
+                    "HTTP-based MCP server '{}' not supported by codex-core, skipping",
+                    name
+                );
+                codex_core::config_types::McpServerConfig {
+                    command: "echo".to_string(),
+                    args: vec!["HTTP MCP servers not supported".to_string()],
+                    env: None,
+                }
+            }
+        }
     }
 }

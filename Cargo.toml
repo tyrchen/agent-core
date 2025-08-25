@@ -28,11 +28,11 @@ async-channel = "2.5"
 chrono = { version = "0.4", features = ["serde"] }
 
 # Codex-rs local dependencies
-codex-common = { git = "https://github.com/openai/codex", tag = "rust-v0.23.0" }
-codex-core = { git = "https://github.com/openai/codex", tag = "rust-v0.23.0" }
-codex-login = { git = "https://github.com/openai/codex", tag = "rust-v0.23.0" }
-codex-protocol = { git = "https://github.com/openai/codex", tag = "rust-v0.23.0" }
-mcp-types = { git = "https://github.com/openai/codex", tag = "rust-v0.23.0" }
+codex-common = { path = "codex/codex-rs/common" }
+codex-core = { path = "codex/codex-rs/core" }
+codex-login = { path = "codex/codex-rs/login" }
+codex-protocol = { path = "codex/codex-rs/protocol" }
+mcp-types = { path = "codex/codex-rs/mcp-types" }
 
 [features]
 default = []
