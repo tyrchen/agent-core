@@ -1,24 +1,35 @@
 [package]
 name = "agent-core"
 version = "0.1.0"
-authors = ["Your Name <YourName@yourdomain.com>"]
+authors = ["Tyr Chen <tyr.chen@gmail.com>"]
 edition = "2024"
 license = "MIT"
-documentation = "https://docs.rs/"
-repository = "https://github.com/TODO"
-homepage = "https://github.com/TODO"
-description = """
-
-"""
+documentation = "https://docs.rs/agent-core"
+repository = "https://github.com/tyrchen/agent-core"
+homepage = "https://github.com/tyrchen/agent-core"
+description = "A Rust library for embedding AI agent capabilities into applications"
 readme = "README.md"
-categories = ["development-tools"]
-keywords = []
+categories = ["development-tools", "api-bindings"]
+keywords = ["ai", "agent", "llm", "codex", "assistant"]
+exclude = [
+  "codex/",
+  "target/",
+  "specs/",
+  "fixtures/",
+  "Makefile",
+  "cliff.toml",
+  "_typos.toml",
+  "deny.toml",
+  "README_zh.md",
+  ".git/",
+  ".github/",
+]
 
 [dependencies]
 # Core dependencies
 anyhow = "1.0.99"
 serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.142"
+serde_json = "1.0.143"
 thiserror = "2.0.16"
 tokio = { version = "1.47", features = ["full"] }
 uuid = { version = "1", features = ["serde", "v4"] }
@@ -28,13 +39,19 @@ async-channel = "2.5"
 chrono = { version = "0.4", features = ["serde"] }
 
 # Codex-rs local dependencies
-codex-common = { path = "codex/codex-rs/common" }
-codex-core = { path = "codex/codex-rs/core" }
-codex-login = { path = "codex/codex-rs/login" }
-codex-protocol = { path = "codex/codex-rs/protocol" }
-mcp-types = { path = "codex/codex-rs/mcp-types" }
+codex-common = { version = "0.24.0-alpha.5", git = "https://github.com/openai/codex", tag = "rust-v0.24.0-alpha.5" }
+codex-core = { version = "0.24.0-alpha.5", git = "https://github.com/openai/codex", tag = "rust-v0.24.0-alpha.5" }
+codex-login = { version = "0.24.0-alpha.5", git = "https://github.com/openai/codex", tag = "rust-v0.24.0-alpha.5" }
+codex-protocol = { version = "0.24.0-alpha.5", git = "https://github.com/openai/codex", tag = "rust-v0.24.0-alpha.5" }
+mcp-types = { version = "0.24.0-alpha.5", git = "https://github.com/openai/codex", tag = "rust-v0.24.0-alpha.5" }
+
+# TUI dependencies (optional, for examples)
+crossterm = { version = "0.29", optional = true }
+ratatui = { version = "0.29", optional = true }
+textwrap = { version = "0.16", optional = true }
 
 [features]
 default = []
 session = []
 utils = []
+tui = ["crossterm", "ratatui", "textwrap"]

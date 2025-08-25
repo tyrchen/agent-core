@@ -62,15 +62,13 @@ pub use tools::{CustomToolHandler, ToolConfig};
 pub use codex_protocol::protocol::{AskForApproval, SandboxPolicy};
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_config_builder() {
-        let config = AgentConfig::builder()
-            .model("gpt-4")
-            .build()
-            .expect("Config should build successfully");
+        let config = AgentConfig::builder().model("gpt-4").build().unwrap();
 
         assert_eq!(config.model(), "gpt-4");
     }

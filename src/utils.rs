@@ -60,7 +60,7 @@ pub mod processing {
     pub fn count_tokens(text: &str) -> usize {
         // Very rough approximation: 1 token ≈ 4 characters
         // Real implementation would use a proper tokenizer
-        (text.len() + 3) / 4
+        text.len().div_ceil(4)
     }
 }
 

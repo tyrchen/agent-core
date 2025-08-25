@@ -1,5 +1,7 @@
 # Agent Core
 
+[中文文档](./README_zh.md) | English
+
 A Rust library for embedding Codex AI agent capabilities into applications. This library provides high-level APIs for creating and managing LLM-driven AI agents with tool execution capabilities, built on top of the Codex platform.
 
 ## Features
@@ -219,26 +221,77 @@ The library is structured around several key components:
 - **Tools**: Built-in and custom tool support
 - **MCP**: Model Context Protocol server integration
 
+## Examples
+
+The library includes two comprehensive examples demonstrating Python assistant capabilities:
+
+### Console Python Assistant
+
+A command-line interface for interacting with the AI agent to solve Python programming tasks.
+
+```bash
+# Run the console example
+cargo run --example python_assistant
+```
+
+Features:
+
+- Automatic Python environment setup using `uv`
+- Real-time plan tracking with progress indicators
+- Streaming output display
+- Tool execution monitoring
+
+### TUI Python Assistant
+
+A terminal user interface with split-pane view for enhanced interaction.
+
+```bash
+# Run the TUI example (requires tui feature)
+cargo run --features tui --example python_assistant_tui
+```
+
+Features:
+
+- Split-pane interface with conversation and plan views
+- Real-time message streaming with auto-scroll
+- Text wrapping for long messages
+- Color-coded message roles
+- Keyboard navigation (↑/↓ arrows, PageUp/PageDown)
+- Plan tracking with status indicators (⏳ pending, 🔄 in-progress, ✅ completed)
+
 ## Current Status
 
-⚠️ **Note**: This is currently a **wrapper library structure demonstration**. The full Codex integration requires additional implementation work to properly interface with the underlying Codex system.
+⚠️ **Note**: This library integrates with the Codex platform for AI agent capabilities. Full functionality requires proper Codex setup and configuration.
 
-### Implemented:
+### Implemented
+
 - ✅ Complete API structure and types
 - ✅ Configuration system with builder pattern
 - ✅ Message types and channel communication
-- ✅ Plan management system
+- ✅ Plan management system with real-time updates
 - ✅ Agent controller for state management
-- ✅ Tool configuration system
+- ✅ Tool configuration and execution system
 - ✅ MCP server configuration
-- ✅ Optional session and utils modules
+- ✅ Python assistant examples (console and TUI)
+- ✅ Streaming output support
+- ✅ Image support in messages
+- ✅ Session management (optional feature)
+- ✅ Utility functions (optional feature)
 
-### TODO:
-- 🔄 Full Codex conversation integration
-- 🔄 Actual tool execution implementation
-- 🔄 MCP server communication
-- 🔄 Authentication and API key management
-- 🔄 Configuration mapping to Codex internals
+### Prerequisites
+
+For Python assistant examples:
+
+- Install `uv` (Python package manager): `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- Set `OPENAI_API_KEY` environment variable
+- Ensure Codex backend services are running
+
+### TODO
+
+- 🔄 Enhanced MCP server communication
+- 🔄 Additional tool implementations
+- 🔄 More example applications
+- 🔄 Performance optimizations
 
 ## License
 
